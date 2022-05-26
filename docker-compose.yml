@@ -1,0 +1,11 @@
+version: "3"
+
+services:
+  cli:
+    image: ${WAVM_CLI_IMAGE}
+    volumes:
+      - ./:/code
+    working_dir: /code
+    stdin_open: true
+    tty: true
+    privileged: true

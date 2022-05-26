@@ -64,13 +64,54 @@ WAVM_DEFINE_INTRINSIC_FUNCTION(wasi,
 							   WASIAddress numSubscriptions,
 							   WASIAddress outNumEventsAddress)
 {
-	UNIMPLEMENTED_SYSCALL("poll_oneoff",
-						  "(" WASIADDRESS_FORMAT ", " WASIADDRESS_FORMAT ", %u, " WASIADDRESS_FORMAT
-						  ")",
-						  inAddress,
-						  outAddress,
-						  numSubscriptions,
-						  outNumEventsAddress);
+	TRACE_SYSCALL("poll_oneoff", "(" WASIADDRESS_FORMAT ", " WASIADDRESS_FORMAT ",  %u, %u)",
+                  inAddress,
+                  outAddress,
+                  numSubscriptions,
+                  outNumEventsAddress);
+
+	Process* process = getProcessFromContextRuntimeData(contextRuntimeData);
+
+    auto inEvents = Runtime::memoryArrayPtr<__wasi_subscription_t>(
+      process->memory, inAddress, numSubscriptions);
+    auto outEvents = Runtime::memoryArrayPtr<__wasi_event_t>(
+      process->memory, outAddress, numSubscriptions);
+
+    for (int i = 0; i < (int) numSubscriptions; i++) {
+        __wasi_subscription_t* thisSub = &inEvents[i];
+
+        if (thisSub->type == __WASI_EVENTTYPE_CLOCK) {
+            // This is a timing event like a sleep
+            uint64_t timeoutNanos = thisSub->u.clock.timeout;
+            int clockType = 0;
+            if (thisSub->u.clock.clock_id == __WASI_CLOCK_MONOTONIC) {
+                clockType = CLOCK_MONOTONIC;
+            } else if (thisSub->u.clock.clock_id == __WASI_CLOCK_REALTIME) {
+                clockType = CLOCK_REALTIME;
+            } else {
+                throw std::runtime_error("Unimplemented clock type");
+            }
+
+            // Do the sleep
+            timespec t{};
+            // faabric::util::nanosToTimespec(timeoutNanos, &t);
+            t.tv_sec = timeoutNanos / 1000000000;
+            t.tv_nsec = timeoutNanos % 1000000000;
+            clock_nanosleep(clockType, 0, &t, nullptr);
+        } else {
+            throw std::runtime_error("Unimplemented event type");
+        }
+
+        // Say that the event has occurred
+        __wasi_event_t* thisEvent = &outEvents[i];
+        thisEvent->type = thisSub->type;
+        thisEvent->error = __WASI_ESUCCESS;
+    }
+
+    // Write the result
+    Runtime::memoryRef<U32>(process->memory, outNumEventsAddress) = (U32)numSubscriptions;
+
+    return __WASI_ESUCCESS;
 }
 
 WAVM_DEFINE_INTRINSIC_FUNCTION(wasi, "proc_exit", void, wasi_proc_exit, __wasi_exitcode_t exitCode)
